@@ -6,9 +6,9 @@ scalaVersion := "2.13.18"
 
 run / fork := true
 
-val pekkoVersion = "2.0.0-M3"
-val pekkoHttpVersion = "2.0.0-M1"
-val pekkoGrpcVersion = "2.0.0-M2"
+val pekkoVersion = "1.7.1"
+val pekkoHttpVersion = "1.4.2"
+val pekkoGrpcVersion = "1.2.0"
 
 enablePlugins(PekkoGrpcPlugin)
 
@@ -17,7 +17,7 @@ resolvers += "Sonatype snapshots" at "https://oss.sonatype.org/content/repositor
 resolvers += Resolver.defaultLocal
 
 libraryDependencies ++= Seq(
-  "ch.qos.logback" % "logback-classic" % "1.5.16",
+  "ch.qos.logback" % "logback-classic" % "1.5.38",
   "org.apache.pekko" %% "pekko-actor-typed" % pekkoVersion,
   "org.apache.pekko" %% "pekko-http" % pekkoHttpVersion,
   "org.apache.pekko" %% "pekko-http-core" % pekkoHttpVersion,
@@ -28,7 +28,7 @@ libraryDependencies ++= Seq(
   "org.apache.pekko" %% "pekko-grpc-runtime" % pekkoGrpcVersion,
   "org.apache.pekko" %% "pekko-actor-testkit-typed" % pekkoVersion % Test,
   "org.apache.pekko" %% "pekko-stream-testkit" % pekkoVersion % Test,
-  "org.scalatest" %% "scalatest" % "3.2.19" % Test
+  "org.scalatest" %% "scalatest" % "3.2.20" % Test
 )
 
 dependencyOverrides ++= Seq(
