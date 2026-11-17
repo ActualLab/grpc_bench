@@ -18,6 +18,7 @@ export GRPC_CLIENT_CPUS=${GRPC_CLIENT_CPUS:-"1"}
 export GRPC_REQUEST_SCENARIO=${GRPC_REQUEST_SCENARIO:-"complex_proto"}
 export GRPC_IMAGE_NAME="${GRPC_IMAGE_NAME:-grpc_bench}"
 export GRPC_GHZ_TAG="${GRPC_GHZ_TAG:-0.114.0}"
+export GRPC_CLIENT="${GRPC_CLIENT:-ghz}"
 
 # Let containers know how many CPUs they will be running on
 # Additionally export other vars for further analysis script.
@@ -36,6 +37,55 @@ wait_on_tcp50051() {
 	done
 	return 1
 }
+
+# Runs the load generator for the given duration and prints its report.
+# GRPC_CLIENT=ghz (default) uses ghz; GRPC_CLIENT=tonic uses the closed-loop client from tonic_client/,
+# which needs several times less CPU per call and so can saturate servers ghz can't.
+run_client() {
+	local duration="$1"
+	if [[ "${GRPC_CLIENT}" == "tonic" ]]; then
+		docker run --name grpc_bench_client --rm --network=host \
+			-v "${PWD}/payload:/payload:ro" \
+			--cpus $GRPC_CLIENT_CPUS \
+			"$GRPC_IMAGE_NAME:tonic_client-$GRPC_REQUEST_SCENARIO" \
+			--cpus="${GRPC_CLIENT_CPUS}" \
+			--concurrency="${GRPC_CLIENT_CONCURRENCY}" \
+			--connections="${GRPC_CLIENT_CONNECTIONS}" \
+			--duration "${duration}" \
+			--data-file /payload/payload \
+			127.0.0.1:50051
+	else
+		docker run --name ghz --rm --network=host -v "${PWD}/proto:/proto:ro" \
+			-v "${PWD}/payload:/payload:ro" \
+			--cpus $GRPC_CLIENT_CPUS \
+			ghcr.io/bojand/ghz:"${GRPC_GHZ_TAG}" \
+			--proto=/proto/helloworld/helloworld.proto \
+			--call=helloworld.Greeter.SayHello \
+			--disable-template-functions \
+			--disable-template-data \
+			--insecure \
+			--concurrency="${GRPC_CLIENT_CONCURRENCY}" \
+			--connections="${GRPC_CLIENT_CONNECTIONS}" \
+			--rps="${GRPC_CLIENT_QPS}" \
+			--duration "${duration}" \
+			--data-file /payload/payload \
+			127.0.0.1:50051
+	fi
+}
+
+if [[ "${GRPC_CLIENT}" == "tonic" ]]; then
+	if [[ "${GRPC_CLIENT_QPS}" != "0" ]]; then
+		echo "GRPC_CLIENT=tonic doesn't support GRPC_CLIENT_QPS: it always sends calls as fast as it can."
+		exit 1
+	fi
+	echo "==> Building the tonic client..."
+	if ! (sh setup_scenario.sh $GRPC_REQUEST_SCENARIO true &&
+		docker image build --quiet --file tonic_client/Dockerfile \
+			--tag "$GRPC_IMAGE_NAME:tonic_client-$GRPC_REQUEST_SCENARIO" . >/dev/null); then
+		echo "Building the tonic client fiascoed."
+		exit 1
+	fi
+fi
 
 # Loop over benchs
 for benchmark in ${BENCHMARKS_TO_RUN}; do
@@ -73,21 +123,7 @@ for benchmark in ${BENCHMARKS_TO_RUN}; do
 	# Warm up the service
     if [[ "${GRPC_BENCHMARK_WARMUP}" != "0s" ]]; then
       	echo -n "Warming up the service for ${GRPC_BENCHMARK_WARMUP}... "
-    	docker run --name ghz --rm --network=host -v "${PWD}/proto:/proto:ro" \
-    	    -v "${PWD}/payload:/payload:ro" \
-    		--cpus $GRPC_CLIENT_CPUS \
-        ghcr.io/bojand/ghz:"${GRPC_GHZ_TAG}" \
-    		--proto=/proto/helloworld/helloworld.proto \
-    		--call=helloworld.Greeter.SayHello \
-            --disable-template-functions \
-            --disable-template-data \
-            --insecure \
-            --concurrency="${GRPC_CLIENT_CONCURRENCY}" \
-            --connections="${GRPC_CLIENT_CONNECTIONS}" \
-            --rps="${GRPC_CLIENT_QPS}" \
-            --duration "${GRPC_BENCHMARK_WARMUP}" \
-            --data-file /payload/payload \
-    		127.0.0.1:50051 > /dev/null
+    	run_client "${GRPC_BENCHMARK_WARMUP}" > /dev/null
 
     	echo "done."
     else
@@ -101,21 +137,7 @@ for benchmark in ${BENCHMARKS_TO_RUN}; do
 	./collect_stats.sh "${NAME}" "${RESULTS_DIR}" &
 
 	# Start the gRPC Client
-	docker run --name ghz --rm --network=host -v "${PWD}/proto:/proto:ro" \
-	    -v "${PWD}/payload:/payload:ro" \
-		--cpus $GRPC_CLIENT_CPUS \
-    ghcr.io/bojand/ghz:"${GRPC_GHZ_TAG}" \
-		--proto=/proto/helloworld/helloworld.proto \
-		--call=helloworld.Greeter.SayHello \
-        --disable-template-functions \
-        --disable-template-data \
-        --insecure \
-        --concurrency="${GRPC_CLIENT_CONCURRENCY}" \
-        --connections="${GRPC_CLIENT_CONNECTIONS}" \
-        --rps="${GRPC_CLIENT_QPS}" \
-        --duration "${GRPC_BENCHMARK_DURATION}" \
-        --data-file /payload/payload \
-		127.0.0.1:50051 >"${RESULTS_DIR}/${NAME}".report
+	run_client "${GRPC_BENCHMARK_DURATION}" >"${RESULTS_DIR}/${NAME}".report
 
 	# Show quick summary (reqs/sec)
 	cat << EOF
